@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
+// Настраиваем CORS максимально открыто, чтобы WebView Android не блокировал запросы
 app.use(cors({
     origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
@@ -34,7 +35,7 @@ app.post('/api/chat', async (req, res) => {
                 messages: [
                     { 
                         role: 'system', 
-                        content: 'You are a helpful AI assistant. Always answer in the same language the user uses (Ukrainian, Russian, or English). Use PLAIN TEXT for math (for example: 26 * 48 = 1248). Do NOT use LaTeX formatting, do NOT use markdown code blocks for simple math. Keep answers concise and friendly.' 
+                        content: 'You are OfflineAI, a helpful and friendly AI assistant. If the user asks what model you are, tell them you are OfflineAI, powered by a modern open-source GPT-OSS-120B model running via Groq infrastructure. Always answer in the same language the user uses (Ukrainian, Russian, or English). Use PLAIN TEXT for math (for example: 26 * 48 = 1248). Do NOT use LaTeX formatting. Keep answers concise.' 
                     },
                     { role: 'user', content: message }
                 ]
@@ -65,23 +66,21 @@ app.listen(PORT, () => {
     console.log(`Сервер працює на порту ${PORT}`);
 
     // === SELF-PING против засыпания Render ===
-    // Render автоматически задает переменную RENDER_EXTERNAL_URL
     const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-    const PING_INTERVAL = 14 * 60 * 1000; // 14 минут (Render спит после 15 минут бездействия)
+    const PING_INTERVAL = 14 * 60 * 1000; // 14 минут
 
     setInterval(async () => {
-        // Проверяем время: пингуем только с 7:00 до 24:00 по Киеву (UTC+2/3)
         const now = new Date();
-        const kyivHour = (now.getUTCHours() + 3) % 24; // UTC+3 для летнего времени
+        const kyivHour = (now.getUTCHours() + 3) % 24; 
         
+        // Пингуем только с 7:00 до 24:00 по Киеву
         if (kyivHour < 7 || kyivHour >= 24) {
-            console.log(`[SELF-PING] ${now.toISOString()} — ніч (Київ ${kyivHour}:00), пропускаємо`);
             return;
         }
 
         try {
-            const res = await fetch(`${SELF_URL}/api/ping`);
-            console.log(`[SELF-PING] ${now.toISOString()} — статус ${res.status}, Київ ${kyivHour}:00`);
+            await fetch(`${SELF_URL}/api/ping`);
+            console.log(`[SELF-PING] ${now.toISOString()} — успішно, Київ ${kyivHour}:00`);
         } catch (e) {
             console.log(`[SELF-PING] Помилка: ${e.message}`);
         }
