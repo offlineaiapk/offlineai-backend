@@ -13,7 +13,7 @@ app.post('/api/chat', async (req, res) => {
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -23,13 +23,13 @@ app.post('/api/chat', async (req, res) => {
 
         const data = await response.json();
 
-        // Если Google вернул ошибку, показываем её
+        // Обработка ошибок от Gemini API
         if (data.error) {
             console.error("Gemini API Error:", data.error);
             return res.status(500).json({ error: "Gemini API: " + data.error.message });
         }
 
-        // Если пришел ответ
+        // Успешный ответ
         if (data.candidates && data.candidates[0] && data.candidates[0].content) {
             res.json({ reply: data.candidates[0].content.parts[0].text });
         } else {
