@@ -12,8 +12,12 @@ app.post('/api/chat', async (req, res) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
+    console.log("--- Новый запрос ---");
+    console.log("Ключ начинается с:", apiKey.substring(0, 5));
+
     try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`, {
+        console.log("Отправляем запрос в Google...");
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -21,23 +25,21 @@ app.post('/api/chat', async (req, res) => {
             })
         });
 
+        console.log("Ответ от Google получен. Статус:", response.status);
         const data = await response.json();
 
-        // Обработка ошибок от Gemini API
         if (data.error) {
-            console.error("Gemini API Error:", data.error);
-            return res.status(500).json({ error: "Gemini API: " + data.error.message });
+            console.error("Ошибка от Google:", data.error.message);
+            return res.status(500).json({ error: "Gemini: " + data.error.message });
         }
 
-        // Успешный ответ
         if (data.candidates && data.candidates[0] && data.candidates[0].content) {
             res.json({ reply: data.candidates[0].content.parts[0].text });
         } else {
-            console.error("Неизвестный формат ответа:", data);
-            res.status(500).json({ error: 'Не вдалося отримати відповідь (Невідомий формат)' });
+            res.status(500).json({ error: 'Пустой ответ от ИИ' });
         }
     } catch (error) {
-        console.error("Server Error:", error);
+        console.error("КРИТИЧЕСКАЯ ОШИБКА СЕТИ:", error);
         res.status(500).json({ error: 'Помилка сервера: ' + error.message });
     }
 });
