@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-// Разрешаем запросы из нашего приложения
 app.use(cors());
 app.use(express.json());
 
@@ -23,15 +22,23 @@ app.post('/api/chat', async (req, res) => {
         });
 
         const data = await response.json();
-        
-        if (data.candidates && data.candidates[0].content) {
+
+        // Если Google вернул ошибку, показываем её
+        if (data.error) {
+            console.error("Gemini API Error:", data.error);
+            return res.status(500).json({ error: "Gemini API: " + data.error.message });
+        }
+
+        // Если пришел ответ
+        if (data.candidates && data.candidates[0] && data.candidates[0].content) {
             res.json({ reply: data.candidates[0].content.parts[0].text });
         } else {
-            res.status(500).json({ error: 'Не вдалося отримати відповідь' });
+            console.error("Неизвестный формат ответа:", data);
+            res.status(500).json({ error: 'Не вдалося отримати відповідь (Невідомий формат)' });
         }
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Помилка сервера' });
+        console.error("Server Error:", error);
+        res.status(500).json({ error: 'Помилка сервера: ' + error.message });
     }
 });
 
