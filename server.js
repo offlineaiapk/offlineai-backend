@@ -2,8 +2,14 @@ const express = require('express');
 const cors = require('cors');
 const app = express();
 
-app.use(cors());
+// Настраиваем CORS максимально открыто, чтобы WebView Android не блокировал запросы
+app.use(cors({
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json());
+app.options('*', cors());
 
 app.post('/api/chat', async (req, res) => {
     const { message } = req.body;
@@ -21,7 +27,13 @@ app.post('/api/chat', async (req, res) => {
             },
             body: JSON.stringify({
                 model: 'openai/gpt-oss-120b',
-                messages: [{ role: 'user', content: message }]
+                messages: [
+                    { 
+                        role: 'system', 
+                        content: 'You are a helpful AI assistant. Always answer in the same language the user uses (Ukrainian, Russian, or English). Use PLAIN TEXT for math (for example: 26 * 48 = 1248). Do NOT use LaTeX formatting, do NOT use markdown code blocks for simple math, do NOT use backslashes. Keep answers concise and friendly.' 
+                    },
+                    { role: 'user', content: message }
+                ]
             })
         });
 
