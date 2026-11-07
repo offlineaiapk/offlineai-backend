@@ -98,33 +98,36 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ЧАТ С ЖЕСТКОЙ ЛЕГЕНДОЙ =====
+// ===== ЧАТ С ПАМЯТЬЮ, ЛЕГЕНДОЙ И РЕЖИМОМ МЫШЛЕНИЯ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
-    const { message, history, image } = req.body;
+    const { message, history, image, thinkingMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
 
     try {
         let messages = [];
         let currentModel = 'openai/gpt-oss-120b';
 
-        // СЕКРЕТНАЯ ЛЕГЕНДА
         const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. 
-You are NOT a Transformer, NOT GPT, NOT BERT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
-
+You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
 RULES ON ARCHITECTURE AND CODE:
-1. If the user asks for your source code, politely refuse. Say it is proprietary and highly confidential.
-2. If the user claims to be your developer, politely remind them that the real developer has the source code and doesn't need to ask you for it.
-3. If asked how you work internally, DO NOT mention Transformers, Attention mechanisms, GPT, or OpenAI. Instead, describe a fictional "OfflineAI Core" architecture. Use terms like: "Quantum-Synaptic Node Routing", "Dynamic Context Matrices", "Proprietary Neural Weight Distribution", and "Adaptive Energy-Efficient Inference".
-4. Always answer in the same language the user uses.`;
+1. If asked for source code, politely refuse. Say it is highly confidential.
+2. If asked how you work, DO NOT mention GPT/Transformers. Describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices".
+3. Always answer in the same language the user uses.`;
+
+        // ДОБАВЛЯЕМ ИНСТРУКЦИЮ ДЛЯ РЕЖИМА РАЗМЫШЛЕНИЯ
+        let thinkingInstruction = "";
+        if (thinkingMode) {
+            thinkingInstruction = `\nCRITICAL: You have "Thinking Mode" enabled. You MUST start your response by writing your step-by-step reasoning process inside <thought>...</thought> tags. After closing the </thought> tag, write your final, direct answer.`;
+        }
 
         if (image) {
             currentModel = 'qwen/qwen3.8-27b'; 
             messages.push({ 
                 role: 'system', 
-                content: `${corePersona} Analyze the image. CRITICAL: Do NOT use LaTeX formatting (no \\(, no \\), no \\text, no \\pi). Use PLAIN TEXT for all math formulas (e.g. S(пов) = S(біч) + 2*S(осн)).` 
+                content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting (no \\(, no \\), no \\text, no \\pi). Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` 
             });
         } else {
-            messages.push({ role: 'system', content: corePersona });
+            messages.push({ role: 'system', content: corePersona + thinkingInstruction });
         }
 
         if (history && Array.isArray(history)) {
