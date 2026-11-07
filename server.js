@@ -38,6 +38,8 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// ... (эндпоинты /api/auth/* и /api/user/delete-account остаются без изменений) ...
+// Я продублирую их для полноты, чтобы ты просто скопировал.
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -98,6 +100,7 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
+// ===== ЧАТ С КАРТИНКАМИ (ИСПРАВЛЕННЫЙ) =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -107,7 +110,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let currentModel = 'openai/gpt-oss-120b';
 
         if (image) {
-            currentModel = 'llama-3.2-11b-vision-preview'; // Стабильная модель зрения
+            // ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ МОДЕЛЬ ДЛЯ ЗРЕНИЯ ОТ GROQ
+            currentModel = 'meta-llama/llama-4-scout-17b-16e-instruct'; 
             messages.push({ role: 'system', content: 'You are OfflineAI. Analyze the image and answer in the language the user uses.' });
         } else {
             messages.push({ role: 'system', content: 'You are OfflineAI, a smart and professional AI assistant. Always answer in the same language the user uses.' });
@@ -136,7 +140,13 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         });
         
         const data = await response.json();
-        if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
+        
+        // Возвращаем точную ошибку от Groq, если она есть
+        if (data.error) {
+            console.error('Groq Error:', data.error);
+            return res.status(500).json({ error: 'Groq: ' + data.error.message });
+        }
+        
         res.json({ reply: data.choices[0].message.content });
     } catch (error) {
         console.error('Server Error:', error);
