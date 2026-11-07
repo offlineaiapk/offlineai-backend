@@ -18,7 +18,7 @@ app.options('*', cors());
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_offlineai_key_2026';
 const TURSO_URL = process.env.TURSO_DB_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'ТВОЙ_WEB_CLIENT_ID.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '1041190296124-61s9a550v27t65hmv1baii34o8vt23fe.apps.googleusercontent.com';
 
 if (!TURSO_URL || !TURSO_TOKEN) {
     console.error("КРИТИЧЕСКАЯ ОШИБКА: Не заданы TURSO_DB_URL и TURSO_AUTH_TOKEN!");
@@ -83,24 +83,20 @@ app.post('/api/auth/google', async (req, res) => {
         const email = payload['email'] || 'user@gmail.com';
         const name = payload['name'] || email.split('@')[0];
 
-        // Проверяем — существует ли пользователь
         const result = await db.execute({ sql: 'SELECT * FROM users WHERE google_id = ?', args: [googleId] });
         let user = result.rows[0];
 
         if (user) {
-            // Существующий пользователь — сразу входим
             const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
             return res.json({ token, username: user.username });
         }
 
-        // Новый пользователь — предлагаем выбрать ник
         const tempToken = jwt.sign(
             { google_id: googleId, email, purpose: 'username_setup' },
             JWT_SECRET,
             { expiresIn: '10m' }
         );
 
-        // Проверяем, не занят ли предложенный ник
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [name] });
         const suggestedTaken = checkName.rows.length > 0;
 
@@ -115,7 +111,6 @@ app.post('/api/auth/google', async (req, res) => {
     }
 });
 
-// Завершение регистрации через Google (когда выбрали ник)
 app.post('/api/auth/google/complete', async (req, res) => {
     const { temp_token, username } = req.body;
     
@@ -133,13 +128,11 @@ app.post('/api/auth/google/complete', async (req, res) => {
         
         const { google_id } = decoded;
         
-        // Проверяем — свободен ли ник
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [username] });
         if (checkName.rows.length > 0) {
             return res.status(400).json({ error: 'Цей нікнейм вже зайнятий' });
         }
         
-        // Создаем аккаунт
         const insert = await db.execute({
             sql: 'INSERT INTO users (username, google_id) VALUES (?, ?) RETURNING id, username',
             args: [username, google_id]
