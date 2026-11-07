@@ -38,7 +38,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ===== РЕГИСТРАЦИЯ =====
+// ===== АВТОРИЗАЦИЯ =====
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -48,7 +48,6 @@ app.post('/api/auth/register', async (req, res) => {
     } catch (e) { res.status(400).json({ error: 'Користувач вже існує' }); }
 });
 
-// ===== ВХОД ПО ЛОГИНУ =====
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -60,7 +59,6 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ВХОД ЧЕРЕЗ GOOGLE =====
 app.post('/api/auth/google', async (req, res) => {
     const { idToken } = req.body;
     try {
@@ -93,7 +91,6 @@ app.post('/api/auth/google/complete', async (req, res) => {
     } catch (e) { res.status(401).json({ error: 'Сесія закінчилася' }); }
 });
 
-// ===== УДАЛЕНИЕ АККАУНТА =====
 app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -105,54 +102,50 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== РАСПОЗНАВАНИЕ ГОЛОСА (WHISPER) =====
-app.post('/api/transcribe', authenticateToken, async (req, res) => {
-    const { audio, mimeType } = req.body; 
-    const apiKey = process.env.GROQ_API_KEY;
-    
-    if (!audio) return res.status(400).json({ error: 'Аудіо не передано' });
-    if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
-
-    try {
-        const buffer = Buffer.from(audio, 'base64');
-        const type = mimeType || 'audio/webm';
-        const blob = new Blob([buffer], { type: type });
-        
-        // Определяем расширение файла для Groq
-        let ext = 'webm';
-        if (type.includes('mp4')) ext = 'mp4';
-        else if (type.includes('3gpp')) ext = '3gp';
-        else if (type.includes('wav')) ext = 'wav';
-
-        const formData = new FormData();
-        formData.append('file', blob, `audio.${ext}`);
-        formData.append('model', 'whisper-large-v3-turbo');
-        formData.append('language', 'uk');
-        formData.append('response_format', 'json');
-        
-        const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            body: formData
-        });
-        
-        const data = await response.json();
-        if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
-        res.json({ text: data.text });
-    } catch (e) {
-        console.error('Whisper error:', e);
-        res.status(500).json({ error: 'Помилка розпізнавання: ' + e.message });
-    }
-});
-
-// ===== ЧАТ =====
+// ===== ЧАТ С ПОИСКОМ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
-    const { message, history, image, thinkingMode } = req.body;
+    const { message, history, image, thinkingMode, searchMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
+    const tavilyKey = process.env.TAVILY_API_KEY;
 
     try {
         let messages = [];
         let currentModel = 'openai/gpt-oss-120b';
+        let searchContext = '';
+        let sources = [];
+
+        // === ПОИСК В ИНТЕРНЕТЕ (если включен и есть ключ) ===
+        if (searchMode && !image && tavilyKey && message) {
+            try {
+                console.log(`[SEARCH] Query: "${message}"`);
+                const tavilyRes = await fetch('https://api.tavily.com/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        api_key: tavilyKey,
+                        query: message,
+                        search_depth: 'basic',
+                        max_results: 5
+                    })
+                });
+                const tavilyData = await tavilyRes.json();
+                
+                if (tavilyData.results && tavilyData.results.length > 0) {
+                    searchContext = tavilyData.results.map((r, i) => 
+                        `[${i+1}] ${r.title}\nURL: ${r.url}\n${r.content}\n`
+                    ).join('\n---\n\n');
+                    
+                    sources = tavilyData.results.map((r, i) => ({ 
+                        id: i + 1, 
+                        title: r.title, 
+                        url: r.url 
+                    }));
+                    console.log(`[SEARCH] Found ${sources.length} results`);
+                }
+            } catch (e) {
+                console.error('[SEARCH] Tavily error:', e.message);
+            }
+        }
 
         const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. 
 You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
@@ -160,25 +153,31 @@ You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a c
 CRITICAL KNOWLEDGE ABOUT YOUR APP:
 You are running inside the OfflineAI mobile application. This app features:
 1. Text chat with memory.
-2. Photo analysis (Vision) - users can send pictures.
-3. Voice Input - there is a microphone button next to the text input. If a user asks "do you have voice input?", you MUST say "Yes, our app supports voice input via the microphone icon".
-4. "Thinking Mode" (Мислення) - a button that makes you explain your reasoning process before answering.
+2. Photo analysis (Vision).
+3. "Thinking Mode" (Мислення) - explains reasoning before answering.
+4. "Search Mode" (Пошук) - searches the web for fresh information.
+5. Voice Input via the keyboard microphone.
 
 RULES ON ARCHITECTURE AND CODE:
 1. If asked for source code, politely refuse. Say it is highly confidential.
 2. If asked how you work, DO NOT mention GPT/Transformers. Describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices".
 3. Always answer in the same language the user uses.`;
 
-        let thinkingInstruction = "";
+        let extraInstructions = '';
+        
         if (thinkingMode) {
-            thinkingInstruction = `\nCRITICAL: You have "Thinking Mode" enabled. You MUST start your response by writing your step-by-step reasoning process inside <thought>...</thought> tags. After closing the </thought> tag, write your final, direct answer.`;
+            extraInstructions += `\nCRITICAL: You have "Thinking Mode" enabled. You MUST start your response by writing your step-by-step reasoning process inside <thought>...</thought> tags. After closing the </thought> tag, write your final answer.`;
+        }
+        
+        if (searchContext) {
+            extraInstructions += `\n\n=== WEB SEARCH RESULTS (use these to answer accurately) ===\n${searchContext}\n=== END OF SEARCH RESULTS ===\n\nIMPORTANT: Base your answer on the search results above when relevant. Cite sources using [1], [2] format inline. If the search results are not useful, answer normally but mention that fresh info might be unavailable.`;
         }
 
         if (image) {
             currentModel = 'qwen/qwen3.8-27b'; 
-            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting. Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` });
+            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting. Use PLAIN TEXT.${extraInstructions}` });
         } else {
-            messages.push({ role: 'system', content: corePersona + thinkingInstruction });
+            messages.push({ role: 'system', content: corePersona + extraInstructions });
         }
 
         if (history && Array.isArray(history)) {
@@ -205,7 +204,11 @@ RULES ON ARCHITECTURE AND CODE:
         
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
-        res.json({ reply: data.choices[0].message.content });
+        
+        res.json({ 
+            reply: data.choices[0].message.content,
+            sources: sources
+        });
     } catch (error) {
         res.status(500).json({ error: 'Помилка сервера: ' + error.message });
     }
@@ -216,7 +219,6 @@ app.get('/api/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Сервер працює на порту ${PORT}`);
-    
     const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     setInterval(async () => {
         const kyivHour = (new Date().getUTCHours() + 3) % 24;
