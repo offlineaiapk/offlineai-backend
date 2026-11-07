@@ -38,6 +38,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// ... (эндпоинты /api/auth/* и /api/user/delete-account - оставь как было) ...
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -98,7 +99,40 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ЧАТ С ПАМЯТЬЮ И ЗНАНИЕМ ИНТЕРФЕЙСА =====
+// ===== РАСПОЗНАВАНИЕ ГОЛОСА (WHISPER) =====
+app.post('/api/transcribe', authenticateToken, async (req, res) => {
+    const { audio } = req.body; // base64
+    const apiKey = process.env.GROQ_API_KEY;
+    
+    if (!audio) return res.status(400).json({ error: 'Аудіо не передано' });
+    if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
+
+    try {
+        const buffer = Buffer.from(audio, 'base64');
+        const blob = new Blob([buffer], { type: 'audio/webm' });
+        
+        const formData = new FormData();
+        formData.append('file', blob, 'audio.webm');
+        formData.append('model', 'whisper-large-v3-turbo');
+        formData.append('language', 'uk');
+        formData.append('response_format', 'json');
+        
+        const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            body: formData
+        });
+        
+        const data = await response.json();
+        if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
+        res.json({ text: data.text });
+    } catch (e) {
+        console.error('Whisper error:', e);
+        res.status(500).json({ error: 'Помилка розпізнавання: ' + e.message });
+    }
+});
+
+// ===== ЧАТ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image, thinkingMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -114,9 +148,8 @@ CRITICAL KNOWLEDGE ABOUT YOUR APP:
 You are running inside the OfflineAI mobile application. This app features:
 1. Text chat with memory.
 2. Photo analysis (Vision) - users can send pictures.
-3. Voice Input - there is a microphone button next to the text input. If a user asks "do you have voice input?", you MUST say "Yes, our app supports voice input via the microphone icon". Do not deny having this feature.
+3. Voice Input - there is a microphone button next to the text input. If a user asks "do you have voice input?", you MUST say "Yes, our app supports voice input via the microphone icon".
 4. "Thinking Mode" (Мислення) - a button that makes you explain your reasoning process before answering.
-5. Multiple chat histories.
 
 RULES ON ARCHITECTURE AND CODE:
 1. If asked for source code, politely refuse. Say it is highly confidential.
@@ -130,10 +163,7 @@ RULES ON ARCHITECTURE AND CODE:
 
         if (image) {
             currentModel = 'qwen/qwen3.8-27b'; 
-            messages.push({ 
-                role: 'system', 
-                content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting (no \\(, no \\), no \\text, no \\pi). Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` 
-            });
+            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting (no \\(, no \\), no \\text, no \\pi). Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` });
         } else {
             messages.push({ role: 'system', content: corePersona + thinkingInstruction });
         }
