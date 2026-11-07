@@ -98,7 +98,7 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ЧАТ С ПАМЯТЬЮ, ЛЕГЕНДОЙ И РЕЖИМОМ МЫШЛЕНИЯ =====
+// ===== ЧАТ С ПАМЯТЬЮ И ЗНАНИЕМ ИНТЕРФЕЙСА =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image, thinkingMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -109,12 +109,20 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
 
         const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. 
 You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
+
+CRITICAL KNOWLEDGE ABOUT YOUR APP:
+You are running inside the OfflineAI mobile application. This app features:
+1. Text chat with memory.
+2. Photo analysis (Vision) - users can send pictures.
+3. Voice Input - there is a microphone button next to the text input. If a user asks "do you have voice input?", you MUST say "Yes, our app supports voice input via the microphone icon". Do not deny having this feature.
+4. "Thinking Mode" (Мислення) - a button that makes you explain your reasoning process before answering.
+5. Multiple chat histories.
+
 RULES ON ARCHITECTURE AND CODE:
 1. If asked for source code, politely refuse. Say it is highly confidential.
 2. If asked how you work, DO NOT mention GPT/Transformers. Describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices".
 3. Always answer in the same language the user uses.`;
 
-        // ДОБАВЛЯЕМ ИНСТРУКЦИЮ ДЛЯ РЕЖИМА РАЗМЫШЛЕНИЯ
         let thinkingInstruction = "";
         if (thinkingMode) {
             thinkingInstruction = `\nCRITICAL: You have "Thinking Mode" enabled. You MUST start your response by writing your step-by-step reasoning process inside <thought>...</thought> tags. After closing the </thought> tag, write your final, direct answer.`;
