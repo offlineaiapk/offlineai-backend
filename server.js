@@ -38,7 +38,6 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// РЕГИСТРАЦИЯ И ВХОД
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -88,7 +87,7 @@ app.post('/api/auth/google/complete', async (req, res) => {
         const user = insert.rows[0];
         const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
         res.json({ token, username: user.username });
-    } catch (e) { res.status(401).json({ error: 'Сесія закінчилася, спробуйте увійти знову' }); }
+    } catch (e) { res.status(401).json({ error: 'Сесія закінчилася' }); }
 });
 
 app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
@@ -96,10 +95,9 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     try {
         await db.batch([{ sql: 'DELETE FROM chats WHERE user_id = ?', args: [userId] }, { sql: 'DELETE FROM users WHERE id = ?', args: [userId] }], "write");
         res.json({ success: true, message: 'Акаунт та всі дані видалено.' });
-    } catch (e) { res.status(500).json({ error: 'Помилка сервера при видаленні' }); }
+    } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ЧАТ С КАРТИНКАМИ
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -109,15 +107,15 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let currentModel = 'openai/gpt-oss-120b';
 
         if (image) {
-            currentModel = 'meta-llama/llama-4-scout-17b-16e-instruct'; // Новейшая модель с поддержкой зрения
+            currentModel = 'llama-3.2-11b-vision-preview'; // Стабильная модель зрения
             messages.push({ role: 'system', content: 'You are OfflineAI. Analyze the image and answer in the language the user uses.' });
         } else {
             messages.push({ role: 'system', content: 'You are OfflineAI, a smart and professional AI assistant. Always answer in the same language the user uses.' });
         }
 
         if (history && Array.isArray(history)) {
-            history.slice(-50).forEach(msg => {
-                let txt = msg.text || 'Дай відповідь на попереднє повідомлення'; // Защита от пустых сообщений
+            history.slice(-10).forEach(msg => {
+                let txt = msg.text || 'Дай відповідь на попереднє повідомлення';
                 messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: txt });
             });
         }
@@ -125,8 +123,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let userContent = message || '';
         if (image) {
             userContent = [
-                { type: 'text', text: message || 'Що ти бачиш на цьому фото?' },
-                { type: 'image_url', image_url: { url: image } }
+                { type: "text", text: message || "Що ти бачиш на цьому фото?" },
+                { type: "image_url", image_url: { url: image } }
             ];
         }
         messages.push({ role: 'user', content: userContent });
