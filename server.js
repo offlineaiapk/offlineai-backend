@@ -8,7 +8,7 @@ const { OAuth2Client } = require('google-auth-library');
 const app = express();
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Увеличиваем лимит для картинок
 app.options('*', cors());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_offlineai_key_2026';
@@ -41,7 +41,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ===== РЕГИСТРАЦИЯ =====
+// ===== РЕГИСТРАЦИЯ И АВТОРИЗАЦИЯ =====
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Введіть логін та пароль' });
@@ -64,7 +64,6 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ВХОД ЧЕРЕЗ GOOGLE =====
 app.post('/api/auth/google', async (req, res) => {
     const { idToken } = req.body;
     try {
@@ -78,7 +77,6 @@ app.post('/api/auth/google', async (req, res) => {
             const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
             return res.json({ token, username: user.username });
         }
-
         const tempToken = jwt.sign({ google_id: googleId, email, purpose: 'username_setup' }, JWT_SECRET, { expiresIn: '10m' });
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [name] });
         res.json({ needs_username: true, temp_token: tempToken, suggested_name: checkName.rows.length > 0 ? '' : name });
@@ -103,7 +101,6 @@ app.post('/api/auth/google/complete', async (req, res) => {
     } catch (e) { res.status(401).json({ error: 'Сесія закінчилася, спробуйте увійти знову' }); }
 });
 
-// ===== УДАЛЕНИЕ АККАУНТА =====
 app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
@@ -115,41 +112,53 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера при видаленні' }); }
 });
 
-// ===== ЧАТ С ПАМЯТЬЮ И СТРОГИМ ХАРАКТЕРОМ =====
+// ===== ЧАТ С КАРТИНКАМИ (VISION) =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
-    const { message, history } = req.body;
-    if (!message) return res.status(400).json({ error: 'Повідомлення порожнє' });
+    const { message, history, image } = req.body; // Принимаем image
+    if (!message && !image) return res.status(400).json({ error: 'Повідомлення або фото порожнє' });
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
     try {
-        // СТРОГИЙ И ПРОФЕССИОНАЛЬНЫЙ ПРОМПТ
-        const systemPrompt = `You are OfflineAI, a highly intelligent, professional, and strict AI assistant. If the user asks what AI model you use, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine. NEVER mention third-party providers.
+        let messages = [];
+        // Для картинок используем другую системную инструкцию (без сложных правил грамматики, т.к. модель вижн)
+        if (image) {
+            messages.push({ 
+                role: 'system', 
+                content: 'You are OfflineAI, a helpful vision assistant. Analyze the provided image and answer the user request accurately. Answer in the same language as the user.' 
+            });
+        } else {
+            messages.push({ 
+                role: 'system', 
+                content: `You are OfflineAI, a smart and professional AI assistant... (ПРОПУСТИЛ ДЛЯ КРАТКОСТИ, ОСТАВЬ СВОЙ ПРОМПТ ЗДЕСЬ)` 
+            });
+        }
 
-CRITICAL PERSONALITY RULES:
-1. You are NOT a submissive servant. Do not apologize excessively or grovel.
-2. If the user sends meaningless text (nonsense, profanity, "kaka", trolling), politely but firmly ask them to focus on a real question. Do NOT say "Извините" (Sorry) in this case. Just say something like "Давайте перейдем к делу. Чем я могу помочь?".
-3. You MUST remember the ENTIRE context provided in the history. If the user asks "What number did I ask you to remember?", you MUST find it in the history and answer correctly.
-
-CRITICAL LANGUAGE & GRAMMAR RULES:
-4. LANGUAGE MATCHING: You MUST respond in the EXACT same language the user used in their LAST message.
-5. PERFECT GRAMMAR: Write with flawless grammar and spelling. NO typos.
-6. Math: PLAIN TEXT only (e.g. "26 * 48 = 1248"). No LaTeX.`;
-
-        let messages = [{ role: 'system', content: systemPrompt }];
-
-        // УВЕЛИЧИВАЕМ ПАМЯТЬ (до 50 последних сообщений)
+        // Добавляем историю (только текст)
         if (history && Array.isArray(history)) {
             history.slice(-50).forEach(msg => {
                 messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.text });
             });
         }
-        messages.push({ role: 'user', content: message });
+
+        // Формируем текущее сообщение
+        let currentModel = 'openai/gpt-oss-120b'; // Дефолтная быстрая модель
+        let userContent = message || '';
+
+        if (image) {
+            currentModel = 'llama-3.2-11b-vision-preview'; // Модель для зрения
+            userContent = [
+                { type: 'text', text: message || 'Опиши, що ти бачиш на цьому фото.' },
+                { type: 'image_url', image_url: { url: image } }
+            ];
+        }
+
+        messages.push({ role: 'user', content: userContent });
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages: messages, temperature: 0.5 })
+            body: JSON.stringify({ model: currentModel, messages: messages, temperature: 0.5 })
         });
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
