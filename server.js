@@ -8,7 +8,8 @@ const { OAuth2Client } = require('google-auth-library');
 const app = express();
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
-app.use(express.json({ limit: '10mb' }));
+// Увеличиваем лимит до 20 МБ для картинок
+app.use(express.json({ limit: '20mb' }));
 app.options('*', cors());
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_offlineai_key_2026';
@@ -38,8 +39,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ... (эндпоинты /api/auth/* и /api/user/delete-account остаются без изменений) ...
-// Я продублирую их для полноты, чтобы ты просто скопировал.
+// ===== РЕГИСТРАЦИЯ И АВТОРИЗАЦИЯ =====
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -100,7 +100,7 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ЧАТ С КАРТИНКАМИ (ИСПРАВЛЕННЫЙ) =====
+// ===== ЧАТ С КАРТИНКАМИ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -110,8 +110,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let currentModel = 'openai/gpt-oss-120b';
 
         if (image) {
-            // ИСПОЛЬЗУЕМ АКТУАЛЬНУЮ МОДЕЛЬ ДЛЯ ЗРЕНИЯ ОТ GROQ
-            currentModel = 'meta-llama/llama-4-scout-17b-16e-instruct'; 
+            // ✅ АКТУАЛЬНАЯ МОДЕЛЬ ДЛЯ ЗРЕНИЯ
+            currentModel = 'qwen/qwen3.8-27b'; 
             messages.push({ role: 'system', content: 'You are OfflineAI. Analyze the image and answer in the language the user uses.' });
         } else {
             messages.push({ role: 'system', content: 'You are OfflineAI, a smart and professional AI assistant. Always answer in the same language the user uses.' });
@@ -126,6 +126,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
 
         let userContent = message || '';
         if (image) {
+            // Groq ожидает data:image/jpeg;base64,...
             userContent = [
                 { type: "text", text: message || "Що ти бачиш на цьому фото?" },
                 { type: "image_url", image_url: { url: image } }
@@ -140,8 +141,6 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         });
         
         const data = await response.json();
-        
-        // Возвращаем точную ошибку от Groq, если она есть
         if (data.error) {
             console.error('Groq Error:', data.error);
             return res.status(500).json({ error: 'Groq: ' + data.error.message });
