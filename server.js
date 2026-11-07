@@ -114,7 +114,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let searchContext = '';
         let sources = [];
 
-        // === ПОИСК В ИНТЕРНЕТЕ (если включен и есть ключ) ===
+        // === ПОИСК В ИНТЕРНЕТЕ (если включен) ===
         if (searchMode && !image && tavilyKey && message) {
             try {
                 console.log(`[SEARCH] Query: "${message}"`);
@@ -125,7 +125,15 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
                         api_key: tavilyKey,
                         query: message,
                         search_depth: 'basic',
-                        max_results: 5
+                        max_results: 5,
+                        include_answer: false,
+                        // ✅ ИСКЛЮЧАЕМ ВИДЕО И СОЦСЕТИ
+                        exclude_domains: [
+                            'youtube.com', 'youtu.be', 'm.youtube.com',
+                            'tiktok.com', 'instagram.com', 'facebook.com',
+                            'twitter.com', 'x.com', 'reddit.com',
+                            'pinterest.com', 'snapchat.com', 'twitch.tv'
+                        ]
                     })
                 });
                 const tavilyData = await tavilyRes.json();
@@ -140,7 +148,7 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
                         title: r.title, 
                         url: r.url 
                     }));
-                    console.log(`[SEARCH] Found ${sources.length} results`);
+                    console.log(`[SEARCH] Found ${sources.length} text results`);
                 }
             } catch (e) {
                 console.error('[SEARCH] Tavily error:', e.message);
@@ -170,7 +178,7 @@ RULES ON ARCHITECTURE AND CODE:
         }
         
         if (searchContext) {
-            extraInstructions += `\n\n=== WEB SEARCH RESULTS (use these to answer accurately) ===\n${searchContext}\n=== END OF SEARCH RESULTS ===\n\nIMPORTANT: Base your answer on the search results above when relevant. Cite sources using [1], [2] format inline. If the search results are not useful, answer normally but mention that fresh info might be unavailable.`;
+            extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END OF SEARCH RESULTS ===\n\nCRITICAL RULES FOR SEARCH RESULTS:\n1. Base your answer ONLY on the text content from the search results above.\n2. The sources are TEXT WEBSITES and NEWS articles, NOT videos.\n3. Do NOT reference YouTube, TikTok, Instagram, or any video platform.\n4. Cite sources inline using [1], [2] format.`;
         }
 
         if (image) {
