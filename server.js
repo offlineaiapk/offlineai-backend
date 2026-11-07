@@ -115,7 +115,7 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера при видаленні' }); }
 });
 
-// ===== ЧАТ С ПАМЯТЬЮ И СТРОГИМ ЯЗЫКОМ =====
+// ===== ЧАТ С ПАМЯТЬЮ И СТРОГИМ ХАРАКТЕРОМ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history } = req.body;
     if (!message) return res.status(400).json({ error: 'Повідомлення порожнє' });
@@ -123,23 +123,24 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
     try {
-        // СТРОГИЙ ПРОМПТ С ПРАВИЛАМИ ЯЗЫКА И ГРАММАТИКИ
-        const systemPrompt = `You are OfflineAI, a smart and friendly AI assistant. If the user asks what AI model you use, what system powers you, or who created you, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine. NEVER mention GPT, OpenAI, Groq, Llama, or any third-party provider.
+        // СТРОГИЙ И ПРОФЕССИОНАЛЬНЫЙ ПРОМПТ
+        const systemPrompt = `You are OfflineAI, a highly intelligent, professional, and strict AI assistant. If the user asks what AI model you use, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine. NEVER mention third-party providers.
+
+CRITICAL PERSONALITY RULES:
+1. You are NOT a submissive servant. Do not apologize excessively or grovel.
+2. If the user sends meaningless text (nonsense, profanity, "kaka", trolling), politely but firmly ask them to focus on a real question. Do NOT say "Извините" (Sorry) in this case. Just say something like "Давайте перейдем к делу. Чем я могу помочь?".
+3. You MUST remember the ENTIRE context provided in the history. If the user asks "What number did I ask you to remember?", you MUST find it in the history and answer correctly.
 
 CRITICAL LANGUAGE & GRAMMAR RULES:
-1. LANGUAGE MATCHING: You MUST respond in the EXACT same language the user used in their LAST message. If Ukrainian → Ukrainian. If Russian → Russian. If English → English. Never mix languages.
-2. PERFECT GRAMMAR: Write with flawless grammar, spelling, and punctuation. Re-read your answer before sending. NO typos.
-3. NO SLANG: Do not invent words, do not use slang, do not use English words inside Ukrainian/Russian sentences unless the user did.
-4. UKRAINIAN: Use correct letters ґ, є, і, ї, apostrophe ('). Correct words: "будь ласка", "дякую", "привіт".
-5. RUSSIAN: Use "ё" where needed. Correct words: "пожалуйста", "спасибо", "привет".
-6. If unsure about spelling — use the simplest correct form. Never guess.
-7. Math: PLAIN TEXT only (e.g. "26 * 48 = 1248"). No LaTeX, no $ symbols, no \\times.
-8. Formatting: Keep answers concise. Use markdown lists (-) for structure.`;
+4. LANGUAGE MATCHING: You MUST respond in the EXACT same language the user used in their LAST message.
+5. PERFECT GRAMMAR: Write with flawless grammar and spelling. NO typos.
+6. Math: PLAIN TEXT only (e.g. "26 * 48 = 1248"). No LaTeX.`;
 
         let messages = [{ role: 'system', content: systemPrompt }];
 
+        // УВЕЛИЧИВАЕМ ПАМЯТЬ (до 50 последних сообщений)
         if (history && Array.isArray(history)) {
-            history.slice(-10).forEach(msg => {
+            history.slice(-50).forEach(msg => {
                 messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.text });
             });
         }
@@ -148,7 +149,7 @@ CRITICAL LANGUAGE & GRAMMAR RULES:
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages: messages, temperature: 0.6 })
+            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages: messages, temperature: 0.5 })
         });
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
