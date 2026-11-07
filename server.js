@@ -147,6 +147,21 @@ app.post('/api/auth/google/complete', async (req, res) => {
     }
 });
 
+// ===== УДАЛЕНИЕ АККАУНТА =====
+app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
+    const userId = req.user.id;
+    try {
+        await db.batch([
+            { sql: 'DELETE FROM chats WHERE user_id = ?', args: [userId] },
+            { sql: 'DELETE FROM users WHERE id = ?', args: [userId] }
+        ], "write");
+        res.json({ success: true, message: 'Акаунт та всі дані видалено.' });
+    } catch (e) {
+        console.error('Помилка видалення:', e);
+        res.status(500).json({ error: 'Помилка сервера при видаленні' });
+    }
+});
+
 // ===== ЧАТ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message } = req.body;
