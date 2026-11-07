@@ -38,7 +38,7 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ... (эндпоинты /api/auth/* и /api/user/delete-account - оставь как было) ...
+// ===== РЕГИСТРАЦИЯ =====
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -48,6 +48,7 @@ app.post('/api/auth/register', async (req, res) => {
     } catch (e) { res.status(400).json({ error: 'Користувач вже існує' }); }
 });
 
+// ===== ВХОД ПО ЛОГИНУ =====
 app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -59,6 +60,7 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
+// ===== ВХОД ЧЕРЕЗ GOOGLE =====
 app.post('/api/auth/google', async (req, res) => {
     const { idToken } = req.body;
     try {
@@ -91,17 +93,21 @@ app.post('/api/auth/google/complete', async (req, res) => {
     } catch (e) { res.status(401).json({ error: 'Сесія закінчилася' }); }
 });
 
+// ===== УДАЛЕНИЕ АККАУНТА =====
 app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     const userId = req.user.id;
     try {
-        await db.batch([{ sql: 'DELETE FROM chats WHERE user_id = ?', args: [userId] }, { sql: 'DELETE FROM users WHERE id = ?', args: [userId] }], "write");
+        await db.batch([
+            { sql: 'DELETE FROM chats WHERE user_id = ?', args: [userId] },
+            { sql: 'DELETE FROM users WHERE id = ?', args: [userId] }
+        ], "write");
         res.json({ success: true, message: 'Акаунт та всі дані видалено.' });
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
 // ===== РАСПОЗНАВАНИЕ ГОЛОСА (WHISPER) =====
 app.post('/api/transcribe', authenticateToken, async (req, res) => {
-    const { audio } = req.body; // base64
+    const { audio, mimeType } = req.body; 
     const apiKey = process.env.GROQ_API_KEY;
     
     if (!audio) return res.status(400).json({ error: 'Аудіо не передано' });
@@ -109,10 +115,17 @@ app.post('/api/transcribe', authenticateToken, async (req, res) => {
 
     try {
         const buffer = Buffer.from(audio, 'base64');
-        const blob = new Blob([buffer], { type: 'audio/webm' });
+        const type = mimeType || 'audio/webm';
+        const blob = new Blob([buffer], { type: type });
         
+        // Определяем расширение файла для Groq
+        let ext = 'webm';
+        if (type.includes('mp4')) ext = 'mp4';
+        else if (type.includes('3gpp')) ext = '3gp';
+        else if (type.includes('wav')) ext = 'wav';
+
         const formData = new FormData();
-        formData.append('file', blob, 'audio.webm');
+        formData.append('file', blob, `audio.${ext}`);
         formData.append('model', 'whisper-large-v3-turbo');
         formData.append('language', 'uk');
         formData.append('response_format', 'json');
@@ -163,7 +176,7 @@ RULES ON ARCHITECTURE AND CODE:
 
         if (image) {
             currentModel = 'qwen/qwen3.8-27b'; 
-            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting (no \\(, no \\), no \\text, no \\pi). Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` });
+            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting. Use PLAIN TEXT (e.g. S(пов) = S(біч) + 2*S(осн)).${thinkingInstruction}` });
         } else {
             messages.push({ role: 'system', content: corePersona + thinkingInstruction });
         }
@@ -203,4 +216,11 @@ app.get('/api/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Сервер працює на порту ${PORT}`);
+    
+    const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+    setInterval(async () => {
+        const kyivHour = (new Date().getUTCHours() + 3) % 24;
+        if (kyivHour < 7 || kyivHour >= 24) return;
+        try { await fetch(`${SELF_URL}/api/ping`); } catch(e) {}
+    }, 14 * 60 * 1000);
 });
