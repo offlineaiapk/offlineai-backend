@@ -7,11 +7,7 @@ const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 
-app.use(cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 app.use(express.json());
 app.options('*', cors());
 
@@ -20,9 +16,7 @@ const TURSO_URL = process.env.TURSO_DB_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '1041190296124-61s9a550v27t65hmv1baii34o8vt23fe.apps.googleusercontent.com';
 
-if (!TURSO_URL || !TURSO_TOKEN) {
-    console.error("КРИТИЧЕСКАЯ ОШИБКА: Не заданы TURSO_DB_URL и TURSO_AUTH_TOKEN!");
-}
+if (!TURSO_URL || !TURSO_TOKEN) console.error("КРИТИЧЕСКАЯ ОШИБКА: Не заданы TURSO_DB_URL и TURSO_AUTH_TOKEN!");
 
 const db = createClient({ url: TURSO_URL, authToken: TURSO_TOKEN });
 const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
@@ -43,8 +37,7 @@ function authenticateToken(req, res, next) {
     if (!token) return res.sendStatus(401);
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) return res.sendStatus(403);
-        req.user = user;
-        next();
+        req.user = user; next();
     });
 }
 
@@ -65,9 +58,7 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const result = await db.execute({ sql: 'SELECT * FROM users WHERE username = ?', args: [username] });
         const user = result.rows[0];
-        if (!user || !(await bcrypt.compare(password, user.password))) {
-            return res.status(400).json({ error: 'Невірний логін або пароль' });
-        }
+        if (!user || !(await bcrypt.compare(password, user.password))) return res.status(400).json({ error: 'Невірний логін або пароль' });
         const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
         res.json({ token, username: user.username });
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
@@ -79,66 +70,37 @@ app.post('/api/auth/google', async (req, res) => {
     try {
         const ticket = await googleClient.verifyIdToken({ idToken, audience: GOOGLE_CLIENT_ID });
         const payload = ticket.getPayload();
-        const googleId = payload['sub'];
-        const email = payload['email'] || 'user@gmail.com';
-        const name = payload['name'] || email.split('@')[0];
+        const googleId = payload['sub'], email = payload['email'] || 'user@gmail.com', name = payload['name'] || email.split('@')[0];
 
         const result = await db.execute({ sql: 'SELECT * FROM users WHERE google_id = ?', args: [googleId] });
         let user = result.rows[0];
-
         if (user) {
             const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
             return res.json({ token, username: user.username });
         }
 
-        const tempToken = jwt.sign(
-            { google_id: googleId, email, purpose: 'username_setup' },
-            JWT_SECRET,
-            { expiresIn: '10m' }
-        );
-
+        const tempToken = jwt.sign({ google_id: googleId, email, purpose: 'username_setup' }, JWT_SECRET, { expiresIn: '10m' });
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [name] });
-        const suggestedTaken = checkName.rows.length > 0;
-
-        res.json({ needs_username: true, temp_token: tempToken, suggested_name: suggestedTaken ? '' : name });
-    } catch (e) {
-        console.error("Ошибка Google:", e.message);
-        res.status(401).json({ error: 'Невірний Google токен' });
-    }
+        res.json({ needs_username: true, temp_token: tempToken, suggested_name: checkName.rows.length > 0 ? '' : name });
+    } catch (e) { res.status(401).json({ error: 'Невірний Google токен' }); }
 });
 
 app.post('/api/auth/google/complete', async (req, res) => {
     const { temp_token, username } = req.body;
-    
-    if (!username || username.length < 3 || username.length > 30) {
-        return res.status(400).json({ error: 'Нікнейм має бути від 3 до 30 символів' });
-    }
-    const usernameRegex = /^[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ0-9_ ]{3,30}$/;
-    if (!usernameRegex.test(username)) {
-        return res.status(400).json({ error: 'Тільки літери, цифри, пробіл та _' });
-    }
+    if (!username || username.length < 3 || username.length > 30) return res.status(400).json({ error: 'Нікнейм має бути від 3 до 30 символів' });
+    if (!/^[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ0-9_ ]{3,30}$/.test(username)) return res.status(400).json({ error: 'Тільки літери, цифри, пробіл та _' });
 
     try {
         const decoded = jwt.verify(temp_token, JWT_SECRET);
         if (decoded.purpose !== 'username_setup') throw new Error('Invalid token');
-        const { google_id } = decoded;
-        
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [username] });
-        if (checkName.rows.length > 0) {
-            return res.status(400).json({ error: 'Цей нікнейм вже зайнятий' });
-        }
+        if (checkName.rows.length > 0) return res.status(400).json({ error: 'Цей нікнейм вже зайнятий' });
         
-        const insert = await db.execute({
-            sql: 'INSERT INTO users (username, google_id) VALUES (?, ?) RETURNING id, username',
-            args: [username, google_id]
-        });
+        const insert = await db.execute({ sql: 'INSERT INTO users (username, google_id) VALUES (?, ?) RETURNING id, username', args: [username, decoded.google_id] });
         const user = insert.rows[0];
         const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
         res.json({ token, username: user.username });
-    } catch (e) {
-        console.error('Ошибка:', e.message);
-        res.status(401).json({ error: 'Сесія закінчилася, спробуйте увійти знову' });
-    }
+    } catch (e) { res.status(401).json({ error: 'Сесія закінчилася, спробуйте увійти знову' }); }
 });
 
 // ===== УДАЛЕНИЕ АККАУНТА =====
@@ -150,47 +112,43 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
             { sql: 'DELETE FROM users WHERE id = ?', args: [userId] }
         ], "write");
         res.json({ success: true, message: 'Акаунт та всі дані видалено.' });
-    } catch (e) {
-        res.status(500).json({ error: 'Помилка сервера при видаленні' });
-    }
+    } catch (e) { res.status(500).json({ error: 'Помилка сервера при видаленні' }); }
 });
 
-// ===== ЧАТ С ПАМЯТЬЮ КОНТЕКСТА =====
+// ===== ЧАТ С ПАМЯТЬЮ И СТРОГИМ ЯЗЫКОМ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
-    const { message, history } = req.body; // Теперь принимаем историю
+    const { message, history } = req.body;
     if (!message) return res.status(400).json({ error: 'Повідомлення порожнє' });
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
     try {
-        // Собираем массив сообщений для Groq
-        let messages = [
-            { 
-                role: 'system', 
-                content: 'You are OfflineAI, a smart and friendly AI assistant. If the user asks what AI model you use, what system powers you, or who created you, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine — an exclusive neural architecture developed specifically for the OfflineAI application. NEVER mention GPT, OpenAI, Groq, Llama, or any third-party provider. You are a unique, self-contained system. Always answer in the same language the user uses (Ukrainian, Russian, or English). Use PLAIN TEXT for math. Do NOT use LaTeX formatting. Keep answers concise and friendly.' 
-            }
-        ];
+        // СТРОГИЙ ПРОМПТ С ПРАВИЛАМИ ЯЗЫКА И ГРАММАТИКИ
+        const systemPrompt = `You are OfflineAI, a smart and friendly AI assistant. If the user asks what AI model you use, what system powers you, or who created you, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine. NEVER mention GPT, OpenAI, Groq, Llama, or any third-party provider.
 
-        // Добавляем историю, если она есть (максимум 10 последних сообщений для экономии токенов)
+CRITICAL LANGUAGE & GRAMMAR RULES:
+1. LANGUAGE MATCHING: You MUST respond in the EXACT same language the user used in their LAST message. If Ukrainian → Ukrainian. If Russian → Russian. If English → English. Never mix languages.
+2. PERFECT GRAMMAR: Write with flawless grammar, spelling, and punctuation. Re-read your answer before sending. NO typos.
+3. NO SLANG: Do not invent words, do not use slang, do not use English words inside Ukrainian/Russian sentences unless the user did.
+4. UKRAINIAN: Use correct letters ґ, є, і, ї, apostrophe ('). Correct words: "будь ласка", "дякую", "привіт".
+5. RUSSIAN: Use "ё" where needed. Correct words: "пожалуйста", "спасибо", "привет".
+6. If unsure about spelling — use the simplest correct form. Never guess.
+7. Math: PLAIN TEXT only (e.g. "26 * 48 = 1248"). No LaTeX, no $ symbols, no \\times.
+8. Formatting: Keep answers concise. Use markdown lists (-) for structure.`;
+
+        let messages = [{ role: 'system', content: systemPrompt }];
+
         if (history && Array.isArray(history)) {
             history.slice(-10).forEach(msg => {
-                messages.push({
-                    role: msg.sender === 'user' ? 'user' : 'assistant',
-                    content: msg.text
-                });
+                messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.text });
             });
         }
-
-        // Добавляем текущее сообщение
         messages.push({ role: 'user', content: message });
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model: 'openai/gpt-oss-120b',
-                messages: messages
-            })
+            body: JSON.stringify({ model: 'openai/gpt-oss-120b', messages: messages, temperature: 0.6 })
         });
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
