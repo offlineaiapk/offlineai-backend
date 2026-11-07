@@ -100,11 +100,7 @@ app.post('/api/auth/google', async (req, res) => {
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [name] });
         const suggestedTaken = checkName.rows.length > 0;
 
-        res.json({
-            needs_username: true,
-            temp_token: tempToken,
-            suggested_name: suggestedTaken ? '' : name
-        });
+        res.json({ needs_username: true, temp_token: tempToken, suggested_name: suggestedTaken ? '' : name });
     } catch (e) {
         console.error("Ошибка Google:", e.message);
         res.status(401).json({ error: 'Невірний Google токен' });
@@ -125,7 +121,6 @@ app.post('/api/auth/google/complete', async (req, res) => {
     try {
         const decoded = jwt.verify(temp_token, JWT_SECRET);
         if (decoded.purpose !== 'username_setup') throw new Error('Invalid token');
-        
         const { google_id } = decoded;
         
         const checkName = await db.execute({ sql: 'SELECT id FROM users WHERE username = ?', args: [username] });
@@ -138,7 +133,6 @@ app.post('/api/auth/google/complete', async (req, res) => {
             args: [username, google_id]
         });
         const user = insert.rows[0];
-        
         const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
         res.json({ token, username: user.username });
     } catch (e) {
@@ -157,34 +151,52 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
         ], "write");
         res.json({ success: true, message: 'Акаунт та всі дані видалено.' });
     } catch (e) {
-        console.error('Помилка видалення:', e);
         res.status(500).json({ error: 'Помилка сервера при видаленні' });
     }
 });
 
-// ===== ЧАТ =====
+// ===== ЧАТ С ПАМЯТЬЮ КОНТЕКСТА =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
-    const { message } = req.body;
+    const { message, history } = req.body; // Теперь принимаем историю
     if (!message) return res.status(400).json({ error: 'Повідомлення порожнє' });
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) return res.status(500).json({ error: 'API ключ не налаштований' });
 
     try {
+        // Собираем массив сообщений для Groq
+        let messages = [
+            { 
+                role: 'system', 
+                content: 'You are OfflineAI, a smart and friendly AI assistant. If the user asks what AI model you use, what system powers you, or who created you, ALWAYS answer that you run on the proprietary "OfflineAI Core" engine — an exclusive neural architecture developed specifically for the OfflineAI application. NEVER mention GPT, OpenAI, Groq, Llama, or any third-party provider. You are a unique, self-contained system. Always answer in the same language the user uses (Ukrainian, Russian, or English). Use PLAIN TEXT for math. Do NOT use LaTeX formatting. Keep answers concise and friendly.' 
+            }
+        ];
+
+        // Добавляем историю, если она есть (максимум 10 последних сообщений для экономии токенов)
+        if (history && Array.isArray(history)) {
+            history.slice(-10).forEach(msg => {
+                messages.push({
+                    role: msg.sender === 'user' ? 'user' : 'assistant',
+                    content: msg.text
+                });
+            });
+        }
+
+        // Добавляем текущее сообщение
+        messages.push({ role: 'user', content: message });
+
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
                 model: 'openai/gpt-oss-120b',
-                messages: [
-                    { role: 'system', content: 'You are OfflineAI...' }, // Оставь свой промпт!
-                    { role: 'user', content: message }
-                ]
+                messages: messages
             })
         });
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
         res.json({ reply: data.choices[0].message.content });
     } catch (error) {
+        console.error('Server Error:', error);
         res.status(500).json({ error: 'Помилка сервера' });
     }
 });
