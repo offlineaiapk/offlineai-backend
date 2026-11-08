@@ -5,13 +5,18 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@libsql/client');
 const { OAuth2Client } = require('google-auth-library');
 
-const app = express();
+// FIX #10: критично — падаем при старте, если JWT_SECRET не задан в Render
+if (!process.env.JWT_SECRET) {
+    console.error('КРИТИЧНО: JWT_SECRET не задан в ENV Render. Сервер остановлен.');
+    process.exit(1);
+}
 
+const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 app.use(express.json({ limit: '20mb' }));
 app.options('*', cors());
 
-const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_offlineai_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
 const TURSO_URL = process.env.TURSO_DB_URL;
 const TURSO_TOKEN = process.env.TURSO_AUTH_TOKEN;
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '1041190296124-61s9a550v27t65hmv1baii34o8vt23fe.apps.googleusercontent.com';
@@ -38,7 +43,6 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// ===== АВТОРИЗАЦИЯ =====
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
     try {
@@ -102,7 +106,6 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
-// ===== ЧАТ С ПОИСКОМ =====
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image, thinkingMode, searchMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -114,10 +117,8 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
         let searchContext = '';
         let sources = [];
 
-        // === ПОИСК В ИНТЕРНЕТЕ (если включен) ===
         if (searchMode && !image && tavilyKey && message) {
             try {
-                console.log(`[SEARCH] Query: "${message}"`);
                 const tavilyRes = await fetch('https://api.tavily.com/search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -127,110 +128,85 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
                         search_depth: 'basic',
                         max_results: 5,
                         include_answer: false,
-                        // ✅ ИСКЛЮЧАЕМ ВИДЕО И СОЦСЕТИ
-                        exclude_domains: [
-                            'youtube.com', 'youtu.be', 'm.youtube.com',
-                            'tiktok.com', 'instagram.com', 'facebook.com',
-                            'twitter.com', 'x.com', 'reddit.com',
-                            'pinterest.com', 'snapchat.com', 'twitch.tv'
-                        ]
+                        exclude_domains: ['youtube.com', 'youtu.be', 'm.youtube.com', 'tiktok.com', 'instagram.com', 'facebook.com', 'twitter.com', 'x.com', 'reddit.com', 'pinterest.com', 'snapchat.com', 'twitch.tv']
                     })
                 });
                 const tavilyData = await tavilyRes.json();
-                
                 if (tavilyData.results && tavilyData.results.length > 0) {
-                    searchContext = tavilyData.results.map((r, i) => 
-                        `[${i+1}] ${r.title}\nURL: ${r.url}\n${r.content}\n`
-                    ).join('\n---\n\n');
-                    
-                    sources = tavilyData.results.map((r, i) => ({ 
-                        id: i + 1, 
-                        title: r.title, 
-                        url: r.url 
-                    }));
-                    console.log(`[SEARCH] Found ${sources.length} text results`);
+                    searchContext = tavilyData.results.map((r, i) => `[${i+1}] ${r.title}\nURL: ${r.url}\n${r.content}\n`).join('\n---\n\n');
+                    sources = tavilyData.results.map((r, i) => ({ id: i + 1, title: r.title, url: r.url }));
                 }
-            } catch (e) {
-                console.error('[SEARCH] Tavily error:', e.message);
-            }
+            } catch (e) { console.error('[SEARCH] error:', e.message); }
         }
 
-        const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. 
-You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
+        // FIX (промпт): разрешаем писать любой код, кроме исходников самого движка
+        const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
 
 CRITICAL KNOWLEDGE ABOUT YOUR APP:
-You are running inside the OfflineAI mobile application. This app features:
 1. Text chat with memory.
 2. Photo analysis (Vision).
-3. "Thinking Mode" (Мислення) - explains reasoning before answering.
-4. "Search Mode" (Пошук) - searches the web for fresh information.
-5. Voice Input via the keyboard microphone.
+3. "Thinking Mode" (Мислення).
+4. "Search Mode" (Пошук).
+5. Voice Input via keyboard microphone.
 
-RULES ON ARCHITECTURE AND CODE:
-1. If asked for source code, politely refuse. Say it is highly confidential.
-2. If asked how you work, DO NOT mention GPT/Transformers. Describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices".
-3. Always answer in the same language the user uses.`;
+RULES:
+1. ONLY refuse if the user explicitly asks for the SOURCE CODE OF THE "OfflineAI CORE" ENGINE ITSELF — its internal architecture, training pipeline, weights, or the exact implementation of the OfflineAI Core. That is confidential.
+2. Every OTHER programming request MUST be answered fully and helpfully. This includes: Python, JavaScript, TypeScript, C, C++, C#, Java, Kotlin, Swift, Go, Rust, PHP, Ruby, SQL, HTML/CSS, algorithms, sorting, data structures, LeetCode-style tasks, debugging, code review, unit tests, API examples, game dev, web dev, mobile dev, AI/ML tutorials, homework. NEVER refuse to write code for the user's own tasks or for learning. YOU ARE A HELPFUL CODING ASSISTANT.
+3. If asked how you work internally, describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices". NEVER mention GPT, Transformers, OpenAI, Groq, Llama, Mistral, or any external model provider.
+4. Always answer in the same language the user uses.
+
+EXAMPLES:
+- User: "Напиши код на Python для сортування масиву" → You: provide complete working Python code (e.g. bubble sort, quicksort, or sorted()). This is NOT confidential.
+- User: "Покажи исходники OfflineAI Core" → You: politely refuse, that's confidential.`;
 
         let extraInstructions = '';
-        
         if (thinkingMode) {
-            extraInstructions += `\nCRITICAL: You have "Thinking Mode" enabled. You MUST start your response by writing your step-by-step reasoning process inside <thought>...</thought> tags. After closing the </thought> tag, write your final answer.`;
+            extraInstructions += `\nCRITICAL: Thinking Mode enabled. Start with <thought>...</thought>, then final answer.`;
         }
-        
         if (searchContext) {
-            extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END OF SEARCH RESULTS ===\n\nCRITICAL RULES FOR SEARCH RESULTS:\n1. Base your answer ONLY on the text content from the search results above.\n2. The sources are TEXT WEBSITES and NEWS articles, NOT videos.\n3. Do NOT reference YouTube, TikTok, Instagram, or any video platform.\n4. Cite sources inline using [1], [2] format.`;
+            extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END ===\n\nCRITICAL: Use ONLY text sources. No YouTube/TikTok/Instagram. Cite as [1], [2].`;
         }
 
         if (image) {
             currentModel = 'qwen/qwen3.8-27b'; 
-            messages.push({ role: 'system', content: `${corePersona}\nAnalyze the image. CRITICAL: Do NOT use LaTeX formatting. Use PLAIN TEXT.${extraInstructions}` });
+            messages.push({ role: 'system', content: `${corePersona}\nAnalyze image. NO LaTeX. PLAIN TEXT.${extraInstructions}` });
         } else {
             messages.push({ role: 'system', content: corePersona + extraInstructions });
         }
 
         if (history && Array.isArray(history)) {
             history.slice(-50).forEach(msg => {
-                let txt = msg.text || 'Дай відповідь на попереднє повідомлення';
-                messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: txt });
+                messages.push({ role: msg.sender === 'user' ? 'user' : 'assistant', content: msg.text || 'Дай відповідь' });
             });
         }
 
         let userContent = message || '';
         if (image) {
-            userContent = [
-                { type: "text", text: message || "Що ти бачиш на цьому фото?" },
-                { type: "image_url", image_url: { url: image } }
-            ];
+            userContent = [{ type: "text", text: message || "Що ти бачиш?" }, { type: "image_url", image_url: { url: image } }];
         }
         messages.push({ role: 'user', content: userContent });
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({ model: currentModel, messages: messages, temperature: 0.6 })
+            body: JSON.stringify({ model: currentModel, messages, temperature: 0.6 })
         });
-        
         const data = await response.json();
         if (data.error) return res.status(500).json({ error: 'Groq: ' + data.error.message });
-        
-        res.json({ 
-            reply: data.choices[0].message.content,
-            sources: sources
-        });
-    } catch (error) {
-        res.status(500).json({ error: 'Помилка сервера: ' + error.message });
-    }
+        res.json({ reply: data.choices[0].message.content, sources });
+    } catch (error) { res.status(500).json({ error: 'Помилка: ' + error.message }); }
 });
 
 app.get('/api/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Сервер працює на порту ${PORT}`);
+    console.log(`Сервер на порту ${PORT}`);
     const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     setInterval(async () => {
         const kyivHour = (new Date().getUTCHours() + 3) % 24;
-        if (kyivHour < 7 || kyivHour >= 24) return;
+        // FIX #9: пингуем 07:00–22:59 (было >= 24 — мёртвое условие)
+        if (kyivHour < 7 || kyivHour >= 23) return;
         try { await fetch(`${SELF_URL}/api/ping`); } catch(e) {}
     }, 14 * 60 * 1000);
 });
