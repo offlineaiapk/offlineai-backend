@@ -11,7 +11,7 @@ if (!process.env.JWT_SECRET) {
 }
 
 const app = express();
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'] }));
 app.use(express.json({ limit: '20mb' }));
 app.options('*', cors());
 
@@ -29,6 +29,8 @@ async function initDB() {
         `CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, user_id INTEGER, title TEXT, messages TEXT)`
     ]);
     try { await db.execute(`ALTER TABLE users ADD COLUMN google_id TEXT;`); } catch(e) {}
+    // ПАТЧ 8: Миграция для синхронизации
+    try { await db.execute(`ALTER TABLE chats ADD COLUMN updated_at INTEGER DEFAULT 0;`); } catch(e) {}
 }
 initDB().catch(console.error);
 
@@ -41,6 +43,8 @@ function authenticateToken(req, res, next) {
         req.user = user; next();
     });
 }
+
+// ======================= АВТОРИЗАЦИЯ =======================
 
 app.post('/api/auth/register', async (req, res) => {
     const { username, password } = req.body;
@@ -105,6 +109,79 @@ app.post('/api/user/delete-account', authenticateToken, async (req, res) => {
     } catch (e) { res.status(500).json({ error: 'Помилка сервера' }); }
 });
 
+// ======================= СИНХРОНИЗАЦИЯ ЧАТОВ =======================
+
+app.get('/api/chats', authenticateToken, async (req, res) => {
+    try {
+        const result = await db.execute({ sql: 'SELECT id, title, messages, updated_at FROM chats WHERE user_id = ?', args: [req.user.id] });
+        const chats = result.rows.map(r => ({
+            id: String(r.id),
+            title: r.title,
+            messages: JSON.parse(r.messages || '[]'),
+            updated_at: r.updated_at || 0
+        }));
+        res.json({ chats });
+    } catch (e) { 
+        console.error('[GET CHATS]', e.message);
+        res.status(500).json({ error: 'Помилка сервера' }); 
+    }
+});
+
+app.post('/api/chats', authenticateToken, async (req, res) => {
+    const { chats } = req.body; 
+    if (!Array.isArray(chats)) return res.status(400).json({ error: 'Invalid payload' });
+    const userId = req.user.id;
+
+    try {
+        for (const chat of chats) {
+            let messages = chat.messages || [];
+            // Лимит: храним не более 500 последних сообщений (защита БД от переполнения)
+            if (messages.length > 500) messages = messages.slice(-500); 
+            
+            const msgStr = JSON.stringify(messages);
+            const title = chat.title || 'Новий чат';
+            const updatedAt = chat.updated_at || Date.now();
+
+            // Проверяем, существует ли чат и кому он принадлежит
+            const existing = await db.execute({ sql: 'SELECT user_id, updated_at FROM chats WHERE id = ?', args: [String(chat.id)] });
+            
+            if (existing.rows.length > 0) {
+                const dbRow = existing.rows[0];
+                if (dbRow.user_id !== userId) continue; // Чужой чат - пропускаем
+                if (updatedAt <= dbRow.updated_at) continue; // Сервер новее - пропускаем
+            }
+
+            // Upsert
+            await db.execute({
+                sql: `INSERT INTO chats (id, user_id, title, messages, updated_at) 
+                      VALUES (?, ?, ?, ?, ?) 
+                      ON CONFLICT(id) DO UPDATE SET title=excluded.title, messages=excluded.messages, updated_at=excluded.updated_at`,
+                args: [String(chat.id), userId, title, msgStr, updatedAt]
+            });
+        }
+        res.json({ success: true });
+    } catch (e) {
+        console.error('[SYNC CHATS]', e.message);
+        res.status(500).json({ error: 'Помилка синхронізації' });
+    }
+});
+
+app.delete('/api/chats/:id', authenticateToken, async (req, res) => {
+    try {
+        await db.execute({ sql: 'DELETE FROM chats WHERE id = ? AND user_id = ?', args: [String(req.params.id), req.user.id] });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: 'Помилка' }); }
+});
+
+app.delete('/api/chats', authenticateToken, async (req, res) => {
+    try {
+        await db.execute({ sql: 'DELETE FROM chats WHERE user_id = ?', args: [req.user.id] });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: 'Помилка' }); }
+});
+
+// ======================= ЧАТ С ИИ =======================
+
 app.post('/api/chat', authenticateToken, async (req, res) => {
     const { message, history, image, thinkingMode, searchMode } = req.body;
     const apiKey = process.env.GROQ_API_KEY;
@@ -138,7 +215,6 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
             } catch (e) { console.error('[SEARCH] error:', e.message); }
         }
 
-        // ПАТЧ 5: Динамическое время для Киева
         const now = new Date();
         const kyivTimeStr = now.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', dateStyle: 'full', timeStyle: 'short' });
 
@@ -166,7 +242,6 @@ RULES:
             extraInstructions += `\nCRITICAL: Thinking Mode enabled. Start with <thought>...</thought>, then final answer.`;
         }
         
-        // ПАТЧ 5: Усиленный промпт для поиска
         if (searchContext) {
             extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END ===\n\nCRITICAL: You DO have access to real-time information through the search results provided above. When the user asks for current events, news, weather, or time, YOU MUST rely on these search results and the CURRENT TIME CONTEXT provided above. Do NOT say "I don't have access to real-time data". Answer based on the provided text. Cite sources as [1], [2]. Do not use YouTube, TikTok, or Instagram.`;
         }
