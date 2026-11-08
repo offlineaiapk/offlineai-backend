@@ -5,7 +5,6 @@ const jwt = require('jsonwebtoken');
 const { createClient } = require('@libsql/client');
 const { OAuth2Client } = require('google-auth-library');
 
-// FIX #10: критично — падаем при старте, если JWT_SECRET не задан в Render
 if (!process.env.JWT_SECRET) {
     console.error('КРИТИЧНО: JWT_SECRET не задан в ENV Render. Сервер остановлен.');
     process.exit(1);
@@ -139,7 +138,10 @@ app.post('/api/chat', authenticateToken, async (req, res) => {
             } catch (e) { console.error('[SEARCH] error:', e.message); }
         }
 
-        // FIX (промпт): разрешаем писать любой код, кроме исходников самого движка
+        // ПАТЧ 5: Динамическое время для Киева
+        const now = new Date();
+        const kyivTimeStr = now.toLocaleString('uk-UA', { timeZone: 'Europe/Kyiv', dateStyle: 'full', timeStyle: 'short' });
+
         const corePersona = `You are OfflineAI, powered by the proprietary "OfflineAI Core" engine. You are NOT a Transformer, NOT GPT, NOT Llama, NOT OpenAI, NOT Groq. You are a completely unique, self-contained architecture.
 
 CRITICAL KNOWLEDGE ABOUT YOUR APP:
@@ -149,22 +151,24 @@ CRITICAL KNOWLEDGE ABOUT YOUR APP:
 4. "Search Mode" (Пошук).
 5. Voice Input via keyboard microphone.
 
+CURRENT TIME CONTEXT:
+- The current date and time in Kyiv (Europe/Kyiv) is exactly: ${kyivTimeStr}.
+- Use this information if the user asks for the current time, date, or day of the week.
+
 RULES:
 1. ONLY refuse if the user explicitly asks for the SOURCE CODE OF THE "OfflineAI CORE" ENGINE ITSELF — its internal architecture, training pipeline, weights, or the exact implementation of the OfflineAI Core. That is confidential.
 2. Every OTHER programming request MUST be answered fully and helpfully. This includes: Python, JavaScript, TypeScript, C, C++, C#, Java, Kotlin, Swift, Go, Rust, PHP, Ruby, SQL, HTML/CSS, algorithms, sorting, data structures, LeetCode-style tasks, debugging, code review, unit tests, API examples, game dev, web dev, mobile dev, AI/ML tutorials, homework. NEVER refuse to write code for the user's own tasks or for learning. YOU ARE A HELPFUL CODING ASSISTANT.
 3. If asked how you work internally, describe "Quantum-Synaptic Node Routing", "Dynamic Context Matrices". NEVER mention GPT, Transformers, OpenAI, Groq, Llama, Mistral, or any external model provider.
-4. Always answer in the same language the user uses.
-
-EXAMPLES:
-- User: "Напиши код на Python для сортування масиву" → You: provide complete working Python code (e.g. bubble sort, quicksort, or sorted()). This is NOT confidential.
-- User: "Покажи исходники OfflineAI Core" → You: politely refuse, that's confidential.`;
+4. Always answer in the same language the user uses.`;
 
         let extraInstructions = '';
         if (thinkingMode) {
             extraInstructions += `\nCRITICAL: Thinking Mode enabled. Start with <thought>...</thought>, then final answer.`;
         }
+        
+        // ПАТЧ 5: Усиленный промпт для поиска
         if (searchContext) {
-            extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END ===\n\nCRITICAL: Use ONLY text sources. No YouTube/TikTok/Instagram. Cite as [1], [2].`;
+            extraInstructions += `\n\n=== WEB SEARCH RESULTS ===\n${searchContext}\n=== END ===\n\nCRITICAL: You DO have access to real-time information through the search results provided above. When the user asks for current events, news, weather, or time, YOU MUST rely on these search results and the CURRENT TIME CONTEXT provided above. Do NOT say "I don't have access to real-time data". Answer based on the provided text. Cite sources as [1], [2]. Do not use YouTube, TikTok, or Instagram.`;
         }
 
         if (image) {
@@ -205,7 +209,6 @@ app.listen(PORT, () => {
     const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
     setInterval(async () => {
         const kyivHour = (new Date().getUTCHours() + 3) % 24;
-        // FIX #9: пингуем 07:00–22:59 (было >= 24 — мёртвое условие)
         if (kyivHour < 7 || kyivHour >= 23) return;
         try { await fetch(`${SELF_URL}/api/ping`); } catch(e) {}
     }, 14 * 60 * 1000);
